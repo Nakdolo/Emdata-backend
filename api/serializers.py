@@ -164,3 +164,31 @@ class VerifyEmailSerializer(serializers.Serializer):
     def save(self):
         # Логика подтверждения будет в представлении (view)
         pass
+
+
+class MedicalTestSubmissionDetailSerializer(serializers.ModelSerializer):
+    """
+    Сериализатор для детального просмотра одной загрузки, включая вложенные результаты тестов.
+    """
+    test_type_name = serializers.CharField(source='test_type.name', read_only=True, allow_null=True)
+    file_name = serializers.SerializerMethodField()
+    # Вложенный сериализатор для результатов, связанных с этой загрузкой
+    # related_name='results' в модели MedicalTestSubmission позволяет получить их через submission.results.all()
+    results = AnalyteHistoryResultSerializer(many=True, read_only=True) # Используем существующий сериализатор результатов
+
+    class Meta:
+        model = MedicalTestSubmission
+        fields = [
+            'id', 'user', 'test_type', 'test_type_name', 'submission_date',
+            'test_date', 'notes', 'uploaded_file', 'file_name',
+            'processing_status', 'processing_details', 'extracted_text',
+            'created_at', 'updated_at',
+            'results', # Включаем вложенные результаты
+        ]
+        read_only_fields = fields # Все поля только для чтения
+
+    def get_file_name(self, obj):
+        if obj.uploaded_file:
+            import os
+            return os.path.basename(obj.uploaded_file.name)
+        return None
