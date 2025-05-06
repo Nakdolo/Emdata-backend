@@ -180,11 +180,7 @@ LOGOUT_REDIRECT_URL = '/'
 ACCOUNT_LOGOUT_REDIRECT_URL = '/'
 
 # --- Настройки CORS ---
-CORS_ALLOWED_ORIGINS = [
-    FRONTEND_URL,
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+CORS_ALLOW_ALL_ORIGINS = True
 # CORS_ALLOW_ALL_ORIGINS = True # Для отладки
 CORS_ALLOW_HEADERS = [
     "accept", "authorization", "content-type", "user-agent",
