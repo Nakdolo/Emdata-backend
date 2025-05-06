@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Загрузить Медицинский Анализ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Стили для кастомизации поля загрузки файла */
+        input[type="file"]::file-selector-button {
+            margin-right: 1rem;
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            border-radius: 0.375rem; /* rounded-md */
+            border: 1px solid #D1D5DB; /* border-gray-300 */
+            font-weight: 500;
+            font-size: 0.875rem; /* text-sm */
+            color: #374151; /* text-gray-700 */
+            background-color: #F9FAFB; /* bg-gray-50 */
+            transition: background-color 0.2s;
+        }
+        input[type="file"]::file-selector-button:hover {
+            background-color: #F3F4F6; /* hover:bg-gray-100 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 py-10">
+    <div class="container mx-auto max-w-xl bg-white p-6 sm:p-8 rounded-lg shadow-md">
+        <h1 class="text-2xl sm:text-3xl font-semibold text-gray-800 mb-6 text-center border-b pb-4">Загрузка Медицинского Анализа</h1>
+
+        {% if form.non_field_errors %}
+            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-md relative mb-6" role="alert">
+                <strong class="font-bold">Ошибка!</strong>
+                <ul class="mt-1 list-disc list-inside text-sm">
+                    {% for error in form.non_field_errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %} <div class="space-y-5">
+                {% if form.test_type %}
+                <div>
+                    <label for="{{ form.test_type.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-1">Тип теста (необязательно)</label>
+                    {{ form.test_type }}
+                    {% if form.test_type.errors %}
+                        <p class="mt-1 text-xs text-red-600">{{ form.test_type.errors|striptags }}</p>
+                    {% endif %}
+                    {% if form.test_type.help_text %}
+                        <p class="mt-1 text-xs text-gray-500">{{ form.test_type.help_text|safe }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <div>
+                    <label for="{{ form.test_date.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-1">Дата проведения теста (необязательно)</label>
+                    {{ form.test_date }} {% if form.test_date.errors %}
+                        <p class="mt-1 text-xs text-red-600">{{ form.test_date.errors|striptags }}</p>
+                    {% endif %}
+                    {% if form.test_date.help_text %}
+                        <p class="mt-1 text-xs text-gray-500">{{ form.test_date.help_text|safe }}</p>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <label for="{{ form.notes.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-1">Заметки (необязательно)</label>
+                    {{ form.notes }}
+                     {% if form.notes.errors %}
+                        <p class="mt-1 text-xs text-red-600">{{ form.notes.errors|striptags }}</p>
+                    {% endif %}
+                     {% if form.notes.help_text %}
+                        <p class="mt-1 text-xs text-gray-500">{{ form.notes.help_text|safe }}</p>
+                    {% endif %}
+                </div>
+
+                <div>
+                    <label for="{{ form.uploaded_file.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-1">Выберите PDF файл *</label>
+                    {{ form.uploaded_file }}
+                    {% if form.uploaded_file.errors %}
+                        <p class="mt-1 text-xs text-red-600">{{ form.uploaded_file.errors|striptags }}</p>
+                    {% endif %}
+                     {% if form.uploaded_file.help_text %}
+                        <p class="mt-1 text-xs text-gray-500">{{ form.uploaded_file.help_text|safe }}</p>
+                    {% else %}
+                         <p class="mt-1 text-xs text-gray-500">Допустимы только файлы в формате PDF.</p>
+                    {% endif %}
+                </div>
+
+            </div> <div class="mt-8 pt-5 border-t border-gray-200">
+                <button type="submit" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-200">
+                    Загрузить и начать обработку
+                </button>
+            </div>
+
+        </form>
+    </div> <script>
+        // Добавляем классы Tailwind к полям формы, сгенерированным Django
+        document.addEventListener('DOMContentLoaded', function() {
+            const textInputs = document.querySelectorAll('input[type="text"], input[type="date"], input[type="email"], input[type="password"], input[type="number"], textarea, select');
+            textInputs.forEach(input => {
+                input.classList.add('mt-1', 'block', 'w-full', 'rounded-md', 'border-gray-300', 'shadow-sm', 'focus:border-blue-500', 'focus:ring-blue-500', 'sm:text-sm');
+                // Добавляем класс для ошибки, если она есть
+                 if (input.closest('div').querySelector('.text-red-600')) {
+                    input.classList.add('border-red-300', 'text-red-900', 'placeholder-red-300', 'focus:border-red-500', 'focus:ring-red-500');
+                 }
+            });
+
+            const fileInputs = document.querySelectorAll('input[type="file"]');
+             fileInputs.forEach(input => {
+                 input.classList.add('block', 'w-full', 'text-sm', 'text-gray-500');
+                 // Добавляем класс для ошибки, если она есть
+                 if (input.closest('div').querySelector('.text-red-600')) {
+                     // Можно добавить обводку или другой индикатор ошибки
+                 }
+             });
+        });
+    </script>
+
+</body>
+</html>

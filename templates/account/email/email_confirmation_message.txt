@@ -1,0 +1,8 @@
+{% load i18n %}
+{% autoescape off %}
+{% blocktrans with site_name=current_site site_domain=current_site %}Вы получили это письмо, потому что пользователь {{ user.get_username }} указал ваш адрес электронной почты для регистрации учетной записи на сайте {{ site_name }}.{% endblocktrans %}
+
+{% trans "Для подтверждения перейдите на" %} {{ activate_url }} {# <-- Используем нашу переменную #}
+
+{% blocktrans with site_domain=current_site %}Благодарим вас за использование сайта «{{ site_name }}!»{% endblocktrans %}
+{% endautoescape %}
