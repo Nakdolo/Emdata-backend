@@ -5,148 +5,132 @@
 import logging
 from rest_framework import generics, permissions, viewsets, status
 from rest_framework.response import Response
+from rest_framework.views import APIView # <-- Импортируем APIView
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Q
+from django.http import Http404
+from uuid import UUID
+from django.utils.translation import gettext_lazy as _
 
 # Импортируем модели
 from data.models import TestResult, Analyte, MedicalTestSubmission
 from users.models import User
+from allauth.account.models import EmailConfirmationHMAC # <-- Для проверки ключа
 
 # Импортируем сериализаторы
 from .serializers import (
     AnalyteHistoryResultSerializer, SimpleAnalyteSerializer,
-    MedicalTestSubmissionListSerializer, UserSerializer
+    MedicalTestSubmissionListSerializer, UserSerializer,
+    VerifyEmailSerializer # <-- Наш сериализатор для верификации
 )
+# Импортируем адаптер для активации
+from allauth.account.adapter import get_adapter
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Используем логгер 'api'
 
-# --- Представление для Истории Анализа ---
-class AnalyteHistoryAPIView(generics.ListAPIView):
+# --- Кастомное Представление для Верификации Email (НОВОЕ) ---
+class CustomVerifyEmailAPIView(APIView):
     """
-    Возвращает историю результатов для конкретного анализа
-    текущего аутентифицированного пользователя.
+    Обрабатывает POST-запрос с ключом для подтверждения email.
+    Использует VerifyEmailSerializer и логику allauth/адаптера.
     """
-    serializer_class = AnalyteHistoryResultSerializer
-    permission_classes = [permissions.IsAuthenticated] # Доступ только для вошедших пользователей
-    filter_backends = [DjangoFilterBackend] # Включаем фильтрацию
-    filterset_fields = { # Определяем поля для фильтрации по дате
-        'submission__test_date': ['gte', 'lte', 'exact', 'range'], # >=, <=, ==, между датами
-    }
+    permission_classes = [permissions.AllowAny] # Доступно всем
+    serializer_class = VerifyEmailSerializer # Используем наш сериализатор
 
-    def get_queryset(self):
-        user = self.request.user
-        # Получаем ID или имя анализа из URL (см. api/urls.py)
-        analyte_identifier = self.kwargs.get('analyte_identifier')
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        # raise_exception=True вызовет ошибку 400, если ключ невалиден (согласно validate_key)
+        serializer.is_valid(raise_exception=True)
+        # Если валидация прошла, значит ключ валиден и объект confirmation сохранен в сериализаторе
+        confirmation = serializer.confirmation
 
-        if not analyte_identifier:
-            # Если идентификатор не передан, можно вернуть пустой queryset или ошибку
-            logger.warning(f"Analyte identifier not provided for history request by user {user.id}")
-            return TestResult.objects.none()
-
-        # Пытаемся найти анализ по UUID или по имени/алиасу
         try:
-            # Сначала пробуем как UUID
-            from uuid import UUID
-            analyte_uuid = UUID(analyte_identifier)
-            analyte = get_object_or_404(Analyte, id=analyte_uuid)
-        except (ValueError, TypeError):
-            # Если не UUID, ищем по имени/алиасу (регистронезависимо)
-            # Это менее надежно, если есть похожие названия
-            analyte = Analyte.objects.filter(
-                models.Q(name__iexact=analyte_identifier) |
-                models.Q(name_en__iexact=analyte_identifier) |
-                models.Q(name_ru__iexact=analyte_identifier) |
-                models.Q(name_kk__iexact=analyte_identifier) |
-                models.Q(abbreviations__icontains=analyte_identifier) # Поиск по аббревиатурам (может дать неточные результаты)
-            ).first()
-            if not analyte:
-                 logger.warning(f"Analyte '{analyte_identifier}' not found for history request by user {user.id}")
-                 raise Http404("Analyte not found.") # Возвращаем 404, если анализ не найден
+            # Выполняем подтверждение (помечает email как verified)
+            confirmation.confirm(self.request)
+            logger.info(f"Email confirmed successfully via API for key: {serializer.validated_data['key'][:10]}...")
 
-        logger.info(f"Fetching history for analyte '{analyte.name}' (ID: {analyte.id}) for user {user.id}")
+            # --- Активируем пользователя через адаптер ---
+            # Вызываем метод confirm_email нашего адаптера, который активирует пользователя
+            adapter = get_adapter(self.request)
+            adapter.confirm_email(self.request, confirmation.email_address)
+            logger.info(f"User activation triggered via adapter for {confirmation.email_address.email}")
+            # -------------------------------------------
 
-        # Фильтруем результаты:
-        # - Принадлежат текущему пользователю
-        # - Относятся к найденному аналиту
-        # - Имеют числовое значение (для графиков)
-        # - Имеют дату теста (для сортировки и графиков)
-        # - Сортируем по дате теста
-        queryset = TestResult.objects.filter(
-            submission__user=user,
-            analyte=analyte,
-            value_numeric__isnull=False, # Только те, где есть числовое значение
-            submission__test_date__isnull=False # Только те, где есть дата теста
-        ).select_related('submission', 'analyte').order_by('submission__test_date') # Сортируем по дате
+            return Response({'detail': _('Email verified successfully.')}, status=status.HTTP_200_OK)
 
-        return queryset
+        # Перехватываем возможные (хотя и маловероятные после validate_key) ошибки
+        except EmailConfirmationHMAC.DoesNotExist:
+             logger.warning(f"Verify email API: Key does not exist (should have been caught by validate_key): {serializer.validated_data['key'][:10]}...")
+             return Response({'detail': _('Invalid confirmation key.')}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+             logger.error(f"Error during email verification API for key {serializer.validated_data['key'][:10]}...: {e}", exc_info=True)
+             return Response({'detail': _('An error occurred during verification.')}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get_serializer(self, *args, **kwargs):
+        """Возвращает экземпляр сериализатора."""
+        return self.serializer_class(*args, **kwargs)
+
 
 # --- Представление для Списка Аналитов ---
 class AnalyteListAPIView(generics.ListAPIView):
-    """
-    Возвращает список всех доступных аналитов (ID, имя, единица).
-    """
     queryset = Analyte.objects.all().order_by('name')
     serializer_class = SimpleAnalyteSerializer
-    permission_classes = [permissions.IsAuthenticated] # Доступно только вошедшим
-    # Можно добавить поиск/фильтрацию, если нужно
-    # filter_backends = [filters.SearchFilter]
-    # search_fields = ['name', 'name_en', 'name_ru', 'name_kk', 'abbreviations']
+    permission_classes = [permissions.IsAuthenticated]
+
+# --- Представление для Истории Анализа ---
+class AnalyteHistoryAPIView(generics.ListAPIView):
+    serializer_class = AnalyteHistoryResultSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = { 'submission__test_date': ['gte', 'lte', 'exact', 'range'], }
+
+    def get_analyte(self):
+        identifier = self.kwargs.get('analyte_identifier')
+        if not identifier: raise Http404("Analyte identifier not provided.")
+        try:
+            analyte_uuid = UUID(identifier)
+            return Analyte.objects.get(id=analyte_uuid)
+        except (ValueError, TypeError, Analyte.DoesNotExist):
+            logger.debug(f"Identifier '{identifier}' not UUID or not found by UUID, searching by name/alias...")
+            analyte = Analyte.objects.filter(
+                Q(name__iexact=identifier) | Q(name_en__iexact=identifier) |
+                Q(name_ru__iexact=identifier) | Q(name_kk__iexact=identifier) |
+                Q(abbreviations__iexact=identifier)
+            ).first()
+            if not analyte:
+                 possible_analytes = Analyte.objects.filter(abbreviations__icontains=identifier)
+                 found_analytes = [pa for pa in possible_analytes if identifier.lower() in [a.strip().lower() for a in pa.abbreviations.split(',') if a.strip()]]
+                 if len(found_analytes) == 1: analyte = found_analytes[0]
+                 elif len(found_analytes) > 1: raise Http404(f"Ambiguous analyte identifier '{identifier}'.")
+            if not analyte: raise Http404(f"Analyte '{identifier}' not found.")
+            return analyte
+
+    def get_queryset(self):
+        user = self.request.user
+        analyte = self.get_analyte()
+        logger.info(f"Fetching history for analyte '{analyte.name}' (ID: {analyte.id}) for user {user.id}")
+        return TestResult.objects.filter(
+            submission__user=user, analyte=analyte, value_numeric__isnull=False,
+            submission__test_date__isnull=False
+        ).select_related('submission', 'analyte').order_by('submission__test_date')
 
 # --- Представление для Списка Загрузок Пользователя ---
 class UserSubmissionsListAPIView(generics.ListAPIView):
-    """
-    Возвращает список загрузок текущего пользователя.
-    """
     serializer_class = MedicalTestSubmissionListSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = {
         'submission_date': ['gte', 'lte', 'exact', 'range'],
         'test_date': ['gte', 'lte', 'exact', 'range'],
-        'processing_status': ['exact', 'in'],
-        'test_type': ['exact'],
+        'processing_status': ['exact', 'in'], 'test_type': ['exact'],
     }
-
     def get_queryset(self):
-        # Возвращаем только загрузки текущего пользователя
         return MedicalTestSubmission.objects.filter(user=self.request.user).select_related('test_type').order_by('-submission_date')
-
 
 # --- Представление для Получения Информации о Пользователе ---
 class UserDetailAPIView(generics.RetrieveAPIView):
-     """
-     Возвращает информацию о текущем пользователе.
-     """
      serializer_class = UserSerializer
      permission_classes = [permissions.IsAuthenticated]
-
-     def get_object(self):
-         # Возвращаем текущего пользователя
-         return self.request.user
-
-
-# --- ViewSet для загрузки (если нужен API для загрузки) ---
-# class MedicalTestSubmissionAPIViewSet(viewsets.ModelViewSet):
-#     serializer_class = MedicalTestSubmissionSerializer # Нужен другой сериализатор для создания
-#     permission_classes = [permissions.IsAuthenticated]
-#     parser_classes = [MultiPartParser, FormParser] # Для загрузки файлов
-
-#     def get_queryset(self):
-#         return MedicalTestSubmission.objects.filter(user=self.request.user)
-
-#     def perform_create(self, serializer):
-#         submission = serializer.save(user=self.request.user)
-#         if submission.uploaded_file and submission.uploaded_file.name.lower().endswith('.pdf'):
-#             # Запускаем задачу парсинга (возможно, через Celery в продакшене)
-#             from data.tasks import process_pdf_submission_plain
-#             import threading
-#             thread = threading.Thread(target=process_pdf_submission_plain, args=(submission.id,), daemon=True)
-#             thread.start()
-#             logger.info(f"API: Started background thread for submission {submission.id}")
-#         else:
-#              logger.warning(f"API: Submission {submission.id} created without a valid PDF file.")
-#              # Можно сразу пометить как FAILED
-#              submission.processing_status = MedicalTestSubmission.StatusChoices.FAILED
-#              submission.processing_details = "No valid PDF file provided during API upload."
-#              submission.save()
+     def get_object(self): return self.request.user
 

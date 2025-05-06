@@ -6,16 +6,17 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-# Импортируем стандартные представления dj-rest-auth
-from dj_rest_auth.registration.views import RegisterView, VerifyEmailView
-# from dj_rest_auth.registration.views import ResendEmailVerificationView
+# Импортируем стандартное представление для регистрации
+from dj_rest_auth.registration.views import RegisterView
+# Импортируем НАШЕ кастомное представление для верификации
+from .views import CustomVerifyEmailAPIView # <-- Импортируем наше представление
 
 # Импортируем наши представления API
 from .views import (
     AnalyteHistoryAPIView,
     AnalyteListAPIView,
     UserSubmissionsListAPIView,
-    UserDetailAPIView,
+    # UserDetailAPIView, # Этот путь предоставляется dj_rest_auth.urls
 )
 
 # router = DefaultRouter()
@@ -23,20 +24,22 @@ from .views import (
 
 urlpatterns = [
     # path('', include(router.urls)),
-     # Эндпоинт для получения информации о текущем пользователе (из dj_rest_auth.urls)
-    # /api/auth/user/ - он подключен в главном urls.py
 
-    # Эндпоинт для получения списка всех аналитов
-    # /api/analytes/
+    # --- URL для регистрации и верификации ---
+    # Используем стандартный RegisterView
+    # --- ИСПОЛЬЗУЕМ НАШЕ КАСТОМНОЕ ПРЕДСТАВЛЕНИЕ ---
+    # Путь будет /api/auth/registration/verify-email/
+    # (т.к. api/urls.py подключен с префиксом /api/ в главном urls.py)
+    path('registration/verify-email/', CustomVerifyEmailAPIView.as_view(), name='rest_verify_email'),
+    # -------------------------------------------
+
+    # Эндпоинт для получения списка всех аналитов (/api/analytes/)
     path('analytes/', AnalyteListAPIView.as_view(), name='analyte-list-api'),
 
-    # Эндпоинт для получения истории конкретного анализа
-    # /api/analytes/<id>/history/
+    # Эндпоинт для получения истории конкретного анализа (/api/analytes/<id>/history/)
     path('analytes/<str:analyte_identifier>/history/', AnalyteHistoryAPIView.as_view(), name='analyte-history-api'),
 
-
-    # Эндпоинт для получения списка загрузок пользователя
-    # /api/submissions/
+    # Эндпоинт для получения списка загрузок пользователя (/api/submissions/)
     path('submissions/', UserSubmissionsListAPIView.as_view(), name='submission-list-api'),
 
 ]

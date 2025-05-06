@@ -1,5 +1,5 @@
 # ==============================================================================
-# Файл: health_project/urls.py (Проверка и подтверждение)
+# Файл: health_project/urls.py (Возврат к include)
 # ==============================================================================
 
 from django.contrib import admin
@@ -15,6 +15,8 @@ from rest_framework import permissions
 
 # Custom views
 from data.views import UploadMedicalTestView, SubmissionStatusView, DownloadSubmissionFileView
+# Убираем импорт account_inactive, т.к. он будет в include('allauth.urls')
+# from allauth.account.views import account_inactive
 
 schema_view = get_schema_view(
    openapi.Info(
@@ -37,7 +39,7 @@ urlpatterns = [
     # --- ИСПОЛЬЗУЕМ СТАНДАРТНЫЙ INCLUDE ДЛЯ РЕГИСТРАЦИИ И ВЕРИФИКАЦИИ ---
     # Эта строка подключит /api/auth/registration/ (для POST)
     # и /api/auth/registration/verify-email/ (для POST)
-    path('api/auth/registration/', include('dj_rest_auth.registration.urls')), # <-- ЭТА СТРОКА ДОЛЖНА БЫТЬ
+    path('api/auth/registration/', include('dj_rest_auth.registration.urls')), # <-- ВОЗВРАЩАЕМ ЭТО
     # --------------------------------------------------------------------
 
     # --- Основное API (убедись, что в api.urls нет /auth/...) ---
@@ -47,7 +49,9 @@ urlpatterns = [
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
 
-    # --- Allauth URLs (для стандартных страниц управления аккаунтом) ---
+    # --- Allauth URLs (включая account_inactive и стандартные страницы) ---
+    path('accounts/', include('allauth.urls')),
+    # ---------------------------------------------------------------------
 
     # --- Веб-интерфейс для загрузки данных ---
     path('upload/', UploadMedicalTestView.as_view(), name='upload_medical_test_url'),

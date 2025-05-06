@@ -146,3 +146,19 @@ class UserSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(read_only=True)
     class Meta: model = User; fields = ['id', 'username', 'email', 'first_name', 'last_name', 'profile']
 
+# --- Сериализатор для Подтверждения Email (НОВЫЙ) ---
+class VerifyEmailSerializer(serializers.Serializer):
+    key = serializers.CharField(write_only=True)
+
+    def validate_key(self, key):
+        try:
+            self.confirmation = EmailConfirmationHMAC.from_key(key)
+            if not self.confirmation:
+                 raise serializers.ValidationError(_('Invalid confirmation key.'))
+        except Exception: # Ловим любые ошибки при разборе ключа
+             raise serializers.ValidationError(_('Invalid confirmation key.'))
+        return key
+
+    def save(self):
+        # Логика подтверждения будет в представлении (view)
+        pass
