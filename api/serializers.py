@@ -4,17 +4,18 @@
 # ==============================================================================
 import logging
 from rest_framework import serializers
+# Импортируем ТОЛЬКО базовый RegisterSerializer
 from dj_rest_auth.registration.serializers import RegisterSerializer
 from dj_rest_auth.serializers import PasswordResetSerializer as BasePasswordResetSerializer
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
-from allauth.account.models import EmailAddress, EmailConfirmationHMAC
-from allauth.account import app_settings as allauth_app_settings
-from allauth.account.adapter import get_adapter
-from django.db import transaction
-from django.conf import settings
-# Импортируем функцию для получения языка из запроса
-from django.utils import translation
+# Убираем ненужные импорты allauth utils и transaction
+from allauth.account.models import EmailAddress # Оставляем для валидации
+# from allauth.account import app_settings as allauth_app_settings
+# from allauth.account.adapter import get_adapter
+# from django.db import transaction
+# from django.conf import settings
+# from django.utils import translation
 
 # Импортируем нашу кастомную форму
 from .forms import CustomResetPasswordForm
@@ -26,92 +27,32 @@ from users.models import UserProfile
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
-# --- Кастомный Сериализатор Регистрации (Добавление locale в URL верификации) ---
+# --- Кастомный Сериализатор Регистрации (Максимально упрощенный) ---
 class CustomRegisterSerializer(RegisterSerializer):
+    """
+    Переопределяем стандартный RegisterSerializer ТОЛЬКО для добавления поля username.
+    Вся остальная логика (валидация email, паролей, сохранение, отправка письма) наследуется.
+    Стандартная логика должна использовать ACCOUNT_EMAIL_CONFIRMATION_URL из settings.
+    """
+    # Добавляем поле username, которое обязательно
     username = serializers.CharField(required=True, max_length=150)
-    email = serializers.EmailField(required=True)
-    password1 = serializers.CharField(write_only=True, style={'input_type': 'password'}, label=_("Password"))
-    password2 = serializers.CharField(write_only=True, style={'input_type': 'password'}, label=_("Confirm Password"))
+
+    # Поля email, password, password2 наследуются и обрабатываются родительским классом
 
     def validate_username(self, username):
+        # Проверка на существование пользователя с таким username
         if User.objects.filter(username__iexact=username).exists():
              raise serializers.ValidationError(_("A user with that username already exists."))
+        # Можно добавить другие валидации username
         return username
 
-    def validate_email(self, email):
-        if EmailAddress.objects.filter(email__iexact=email).exists():
-             raise serializers.ValidationError(_("A user is already registered with this e-mail address."))
-        return email
+    # Валидация email будет выполнена стандартным сериализатором с учетом unique=True в модели
+    # и проверкой allauth, если она настроена
 
-    def validate(self, data):
-        password = data.get('password1')
-        password2 = data.get('password2')
-        if password != password2:
-            raise serializers.ValidationError({'password2': _('The two password fields didn’t match.')})
-        try:
-            from django.contrib.auth.password_validation import validate_password
-            validate_password(password)
-        except serializers.ValidationError as e:
-            raise serializers.ValidationError({'password': list(e.codes)})
-        data.pop('password2', None)
-        return data
+    # Валидация совпадения паролей выполняется стандартным сериализатором
 
-    @transaction.atomic
-    def save(self, request):
-        """
-        Создает пользователя, используя наш CustomUserManager и отправляет письмо
-        с кастомной ссылкой верификации, ведущей на фронтенд (с учетом locale).
-        """
-        user = User.objects.create_user(
-            username=self.validated_data.get('username'),
-            email=self.validated_data.get('email'),
-            password=self.validated_data.get('password1'),
-        )
-        user.is_active = not allauth_app_settings.EMAIL_VERIFICATION == allauth_app_settings.EmailVerificationMethod.MANDATORY
-        user.save(update_fields=['is_active'])
-
-        try:
-            # --- Формируем ссылку для фронтенда вручную С УЧЕТОМ LOCALE ---
-            email_address, created = EmailAddress.objects.get_or_create(
-                user=user, email=user.email, defaults={'primary': True, 'verified': False}
-            )
-            if created: logger.info(f"Created EmailAddress record for {user.email}")
-
-            key = EmailConfirmationHMAC(email_address).key
-            frontend_url_base = getattr(settings, 'FRONTEND_URL', '')
-            if frontend_url_base.endswith('/'):
-                 frontend_url_base = frontend_url_base[:-1]
-
-            # Получаем текущий язык из запроса
-            current_language = translation.get_language_from_request(request, check_path=True) or settings.LANGUAGE_CODE.split('-')[0] # Запасной язык
-
-            # Собираем URL, используя шаблон из настроек, но подставляя locale
-            # Пример шаблона в settings: /auth/confirm-email/{key}/ (без locale)
-            path_template_without_locale = getattr(settings, 'ACCOUNT_EMAIL_CONFIRMATION_URL_PATH', '/auth/confirm-email/{key}/')
-            # Добавляем locale в начало пути
-            activate_relative_path = f"/{current_language}{path_template_without_locale.format(key=key)}"
-            activate_url = frontend_url_base + activate_relative_path
-            logger.debug(f"Generated activation URL for email (with locale): {activate_url}")
-            # -----------------------------------------------------------------
-
-            context = {
-                "user": user,
-                "activate_url": activate_url, # Передаем нашу ссылку с locale
-                "current_site": getattr(settings, 'SITE_ID', 1),
-                "key": key,
-            }
-
-            adapter = get_adapter(request)
-            adapter.send_mail(
-                'account/email/email_confirmation',
-                user.email,
-                context
-            )
-        except Exception as e:
-            logger.error(f"Failed to send verification email to {user.email}: {e}", exc_info=True)
-
-        logger.info(f"User registered via API: {user.username} ({user.email}), needs verification.")
-        return user
+    # НЕ переопределяем save - стандартный save вызовет create_user менеджера и отправит письмо,
+    # используя настройки allauth (включая ACCOUNT_EMAIL_CONFIRMATION_URL)
 
 
 # --- Кастомный Сериализатор для Запроса Сброса Пароля ---
@@ -119,6 +60,33 @@ class CustomPasswordResetSerializer(BasePasswordResetSerializer):
     @property
     def password_reset_form_class(self):
         return CustomResetPasswordForm
+
+
+# --- Сериализатор для Подтверждения Email ---
+class VerifyEmailSerializer(serializers.Serializer):
+    key = serializers.CharField(write_only=True)
+
+    def validate_key(self, key):
+        try:
+            # Используем EmailConfirmationHMAC для поиска ключа
+            from allauth.account.models import EmailConfirmationHMAC
+            self.confirmation = EmailConfirmationHMAC.from_key(key)
+            if not self.confirmation:
+                 # Если ключ не найден или невалиден по формату HMAC
+                 logger.warning(f"VerifyEmailSerializer: Invalid or non-existent key format: {key[:10]}...")
+                 raise serializers.ValidationError(_('Invalid confirmation key.'))
+            # Дополнительная проверка: не истек ли срок действия ключа?
+            if self.confirmation.key_expired():
+                 logger.warning(f"VerifyEmailSerializer: Expired key used: {key[:10]}...")
+                 raise serializers.ValidationError(_('Confirmation key expired.'))
+        except Exception as e: # Ловим любые другие ошибки при разборе ключа
+             logger.error(f"VerifyEmailSerializer: Error validating key {key[:10]}...: {e}", exc_info=True)
+             raise serializers.ValidationError(_('Invalid confirmation key.'))
+        return key
+
+    def save(self):
+        # Логика подтверждения будет в представлении (view)
+        pass
 
 
 # --- Остальные сериализаторы (без изменений) ---
@@ -146,19 +114,3 @@ class UserSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(read_only=True)
     class Meta: model = User; fields = ['id', 'username', 'email', 'first_name', 'last_name', 'profile']
 
-# --- Сериализатор для Подтверждения Email (НОВЫЙ) ---
-class VerifyEmailSerializer(serializers.Serializer):
-    key = serializers.CharField(write_only=True)
-
-    def validate_key(self, key):
-        try:
-            self.confirmation = EmailConfirmationHMAC.from_key(key)
-            if not self.confirmation:
-                 raise serializers.ValidationError(_('Invalid confirmation key.'))
-        except Exception: # Ловим любые ошибки при разборе ключа
-             raise serializers.ValidationError(_('Invalid confirmation key.'))
-        return key
-
-    def save(self):
-        # Логика подтверждения будет в представлении (view)
-        pass
