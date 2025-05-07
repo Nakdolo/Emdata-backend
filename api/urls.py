@@ -1,58 +1,48 @@
 # ==============================================================================
 # Файл: api/urls.py
 # Описание: URL-маршруты для API приложения.
-# Включает URL для загрузки файлов и списка загрузок.
 # ==============================================================================
 
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
+from django.urls import path
 
-# Импортируем НАШЕ кастомное представление для верификации
-from .views import CustomVerifyEmailAPIView, SubmissionDetailAPIView # <-- Импортируем наше представление
+# Импортируем представления из data.views
+from data.views import DownloadSubmissionFileView, DeleteSubmissionView
 
-# Импортируем наши представления API (включая новые)
+# Импортируем представления из текущего приложения (api.views)
 from .views import (
-    AnalyteHistoryAPIView,
-    AnalyteListAPIView,
-    UserSubmissionsListAPIView, # Представление для списка загрузок
-    UploadLabResultsAPIView, # Представление для загрузки файлов
-    # UserDetailAPIView, # Этот путь предоставляется dj_rest_auth.urls
+    CustomVerifyEmailAPIView, 
+    AnalyteHistoryAPIView,   
+    AnalyteListAPIView,      
+    UserSubmissionsListAPIView,
+    UploadLabResultsAPIView, 
+    SubmissionDetailAPIView, 
 )
 
-# Если у вас есть ViewSets, их можно зарегистрировать здесь
-# router = DefaultRouter()
-# router.register(r'some_resource', SomeViewSet)
-
 urlpatterns = [
-    # Если используете ViewSets, добавьте:
-    # path('', include(router.urls)),
-
-    # --- URL для регистрации и верификации (часть allauth) ---
-    # Используем наше кастомное представление для верификации
+    # --- URL для регистрации и верификации ---
     path('registration/verify-email/', CustomVerifyEmailAPIView.as_view(), name='rest_verify_email'),
-    # ---------------------------------------------------------
 
-    # Эндпоинт для получения списка всех аналитов (/api/analytes/)
+    # --- Аналиты ---
     path('analytes/', AnalyteListAPIView.as_view(), name='analyte-list-api'),
-
-    # Эндпоинт для получения истории конкретного анализа (/api/analytes/<uuid:analyte_id>/history/)
-    # Используем <str:...> или <uuid:...> в зависимости от того, как вы передаете ID аналита
-    # В get_analyte в views.py используется логика для UUID или имени/алиаса,
-    # поэтому <str:analyte_identifier> более гибкий, но <uuid:analyte_id> точнее, если передаете UUID.
-    # Оставляем <str:analyte_identifier> как было в вашем коде.
     path('analytes/<str:analyte_identifier>/history/', AnalyteHistoryAPIView.as_view(), name='analyte-history-api'),
 
-    # --- Эндпоинт для получения списка загрузок пользователя (/api/submissions/) ---
+    # --- Загрузки (Submissions) ---
+    # Для загрузки файлов (POST)
+    path('upload/', UploadLabResultsAPIView.as_view(), name='upload_lab_results_api'),
+    
+    # Для списка загрузок пользователя (GET)
     path('submissions/', UserSubmissionsListAPIView.as_view(), name='submission-list-api'),
-    # -------------------------------------------------------------------------------
-        # --- Эндпоинт для получения данных ---
-
+    
+    # Для получения деталей конкретной загрузки (GET)
+    # Убедитесь, что SubmissionDetailAPIView в api/views.py обрабатывает GET
     path('submissions/<uuid:id>/', SubmissionDetailAPIView.as_view(), name='submission-detail-api'),
 
-    # --- Эндпоинт для загрузки файлов (/api/upload/) ---
-    path('upload/', UploadLabResultsAPIView.as_view(), name='upload-lab-results-api'),
-    # ---------------------------------------------------
+    # --- URL для УДАЛЕНИЯ конкретной загрузки (DELETE) ---
+    # Используем DeleteSubmissionView из data.views
+    # Фронтенд вызывает /api/submission/<submissionId>/delete/
+    path('submission/<uuid:submission_id>/delete/', DeleteSubmissionView.as_view(), name='delete_submission_url'),
 
-    # Добавь здесь другие API URLы, если они есть
-
+    # --- URL для СКАЧИВАНИЯ файла через API ---
+    # Фронтенд вызывает /api/submission/<submissionId>/download/
+    path('submission/<uuid:submission_id>/download/', DownloadSubmissionFileView.as_view(), name='api_submission_download_url'),
 ]

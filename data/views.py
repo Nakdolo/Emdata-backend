@@ -4,28 +4,28 @@
 # ==============================================================================
 
 import logging
-import threading
-import os # Для работы с путями файлов
-from django.shortcuts import render, redirect, get_object_or_404
-from django.views import View
-from django.urls import reverse
-from django.http import HttpResponseForbidden, HttpResponseRedirect, Http404, FileResponse
-from django.contrib.auth.mixins import LoginRequiredMixin
+import threading # Not used in DownloadSubmissionFileView or DeleteSubmissionView
+import os
+from django.shortcuts import get_object_or_404 # render, redirect not used by these API views
+from django.views import View # Not used by these API views
+from django.urls import reverse # Not used by these API views
+from django.http import Http404, FileResponse # HttpResponseForbidden, HttpResponseRedirect, JsonResponse not used by these API views
+from django.contrib.auth.mixins import LoginRequiredMixin # Not used by these API views
 from django import forms
 from django.utils.translation import gettext_lazy as _
-from django.contrib import messages # Для сообщений пользователю
-from requests import Response
+from django.contrib import messages # Not used by these API views
+
+# CORRECTED IMPORT: Changed from 'requests' to 'rest_framework.response'
+from rest_framework.response import Response
 from rest_framework import authentication, permissions
 from rest_framework.views import APIView
+from rest_framework import status
 
-# Импортируем модели и задачу из текущего приложения
 from .models import MedicalTestSubmission
-from .tasks import process_pdf_submission_plain
 
-# Логгер для представлений
 view_logger = logging.getLogger('data.views')
 
-# --- Форма Загрузки ---
+# --- Форма Загрузки (Оставлена как есть из вашего файла) ---
 class MedicalTestSubmissionForm(forms.ModelForm):
     class Meta:
         model = MedicalTestSubmission
@@ -57,67 +57,11 @@ class MedicalTestSubmissionForm(forms.ModelForm):
         if file:
             if not file.name.lower().endswith('.pdf'):
                 raise forms.ValidationError(_("Only PDF files are allowed."))
-        elif not file:
+        elif not file: # This condition might be redundant if uploaded_file.required = True
              raise forms.ValidationError(_("This field is required."))
         return file
 
-# --- Представление для Загрузки Файла ---
-class UploadMedicalTestView(LoginRequiredMixin, View):
-    form_class = MedicalTestSubmissionForm
-    template_name = 'data/upload_form.html'
-
-    def get(self, request, *args, **kwargs):
-        form = self.form_class()
-        return render(request, self.template_name, {'form': form})
-
-    def post(self, request, *args, **kwargs):
-        form = self.form_class(request.POST, request.FILES)
-        if form.is_valid():
-            submission = form.save(commit=False)
-            submission.user = request.user
-            submission.processing_status = MedicalTestSubmission.StatusChoices.PENDING
-            try:
-                 submission.save()
-                 view_logger.info(f"User {request.user.id} submitted file for submission {submission.id}. Scheduling background processing.")
-            except Exception as e:
-                 view_logger.error(f"Error saving submission for user {request.user.id}: {e}", exc_info=True)
-                 form.add_error(None, _("An error occurred while saving the submission. Please try again."))
-                 return render(request, self.template_name, {'form': form})
-
-            try:
-                thread = threading.Thread(
-                    target=process_pdf_submission_plain,
-                    args=(submission.id,),
-                    daemon=True
-                )
-                thread.start()
-                view_logger.info(f"Started background thread {thread.ident} for submission {submission.id}")
-            except Exception as thread_err:
-                 view_logger.exception(f"Failed to start background thread for submission {submission.id}: {thread_err}", exc_info=True)
-                 submission.processing_status = MedicalTestSubmission.StatusChoices.FAILED
-                 submission.processing_details = f"Failed to start processing thread: {str(thread_err)}"
-                 submission.save(update_fields=['processing_status', 'processing_details'])
-                 messages.error(request, _("The file was saved, but an error occurred starting the background processing. Please contact support."))
-                 status_url = reverse('submission_status_url', kwargs={'submission_id': submission.id})
-                 return HttpResponseRedirect(status_url)
-
-            # Перенаправляем на страницу статуса
-            status_url = reverse('submission_status_url', kwargs={'submission_id': submission.id})
-            return HttpResponseRedirect(status_url)
-        else:
-            view_logger.warning(f"User {request.user.id} submitted invalid form: {form.errors.as_json()}")
-            return render(request, self.template_name, {'form': form})
-
-# --- Представление для Отображения Статуса ---
-class SubmissionStatusView(LoginRequiredMixin, View):
-    template_name = 'data/submission_status.html'
-
-    def get(self, request, submission_id, *args, **kwargs):
-        submission = get_object_or_404(MedicalTestSubmission, id=submission_id, user=request.user)
-        context = {'submission': submission}
-        return render(request, self.template_name, context)
-
-# --- Представление для Скачивания Файла (НОВОЕ) ---
+# --- Представление для Скачивания Файла ---
 class DownloadSubmissionFileView(APIView):
     authentication_classes = [authentication.TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
@@ -126,15 +70,72 @@ class DownloadSubmissionFileView(APIView):
         submission = get_object_or_404(MedicalTestSubmission, id=submission_id, user=request.user)
 
         if not submission.uploaded_file:
-            raise Http404("File not found for this submission.")
+            # Using DRF Response for consistency in API views
+            return Response({"detail": "File not found for this submission."}, status=status.HTTP_404_NOT_FOUND)
 
         try:
             file_path = submission.uploaded_file.path
+            # FileResponse is a Django HTTP response, suitable for sending files.
             response = FileResponse(open(file_path, 'rb'), as_attachment=True, filename=os.path.basename(file_path))
             return response
         except FileNotFoundError:
-            raise Http404("File not found on server.")
+            view_logger.warning(f"File not found on server for submission {submission_id} at path {submission.uploaded_file.path if submission.uploaded_file else 'N/A'}")
+            return Response({"detail": "File not found on server."}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            # Логирование ошибки
-            return Response({"error": "An error occurred while trying to download the file."}, status=500)
+            view_logger.error(f"Error downloading file for submission {submission_id}: {e}", exc_info=True)
+            # Using DRF Response
+            return Response({"detail": "An error occurred while trying to download the file."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# --- Представление для Удаления Загрузки ---
+class DeleteSubmissionView(APIView):
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, submission_id, *args, **kwargs):
+        """
+        Allows a user to delete their submission and the associated file.
+        This view is intended to be called if specifically routed, e.g. /api/submissions/<id>/delete/
+        """
+        submission = get_object_or_404(MedicalTestSubmission, id=submission_id, user=request.user)
+
+        file_path = None
+        if submission.uploaded_file and hasattr(submission.uploaded_file, 'path'):
+            file_path = submission.uploaded_file.path
+
+        try:
+            submission.delete() # This also triggers the post_delete signal in models.py if defined
+            view_logger.info(
+                f"User {request.user.id} deleted submission {submission_id} record."
+            )
+
+            # File deletion from disk should ideally be handled by a post_delete signal 
+            # on the MedicalTestSubmission model. If you have such a signal, this manual
+            # os.remove is not needed here and might even cause issues if the file is already gone.
+            # If you DON'T have a post_delete signal for file cleanup:
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    view_logger.info(f"File deleted from disk: {file_path}")
+                except OSError as e:
+                    view_logger.error(f"Error deleting file {file_path} from disk: {e}", exc_info=True)
+            elif submission.uploaded_file and not (file_path and os.path.exists(file_path)):
+                 view_logger.warning(
+                     f"File path {file_path if file_path else 'not available'} was recorded for submission {submission_id}, but file not found on disk or path was invalid during deletion attempt."
+                 )
+
+            # Option 1: Standard DRF practice for DELETE is to return 204 No Content
+            # return Response(status=status.HTTP_204_NO_CONTENT)
+            
+            # Option 2: If frontend strictly needs a body (as per your original frontend code)
+            return Response({'status': 'success', 'message': 'Submission deleted successfully.'}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            view_logger.error(
+                f"Error during submission record deletion or file handling for {submission_id}, user {request.user.id}: {e}",
+                exc_info=True,
+            )
+            # Using DRF Response
+            return Response(
+                {'detail': _("An error occurred while trying to delete the submission.")},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

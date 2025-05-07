@@ -13,10 +13,6 @@ from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
 
-# Custom views
-from data.views import UploadMedicalTestView, SubmissionStatusView, DownloadSubmissionFileView
-# Убираем импорт account_inactive, т.к. он будет в include('allauth.urls')
-# from allauth.account.views import account_inactive
 
 schema_view = get_schema_view(
    openapi.Info(
@@ -53,11 +49,6 @@ urlpatterns = [
     path('accounts/', include('allauth.urls')),
     # ---------------------------------------------------------------------
 
-    # --- Веб-интерфейс для загрузки данных ---
-    path('upload/', UploadMedicalTestView.as_view(), name='upload_medical_test_url'),
-    path('upload/success/', TemplateView.as_view(template_name="data/upload_success.html"), name='upload_success_page'),
-    path('submission/<uuid:submission_id>/status/', SubmissionStatusView.as_view(), name='submission_status_url'),
-    path('submission/<uuid:submission_id>/download/', DownloadSubmissionFileView.as_view(), name='submission_download_url'),
 ]
 
 # --- Media files in DEBUG ---
