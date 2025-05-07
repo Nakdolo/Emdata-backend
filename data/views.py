@@ -14,6 +14,9 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django import forms
 from django.utils.translation import gettext_lazy as _
 from django.contrib import messages # Для сообщений пользователю
+from requests import Response
+from rest_framework import authentication, permissions
+from rest_framework.views import APIView
 
 # Импортируем модели и задачу из текущего приложения
 from .models import MedicalTestSubmission
@@ -115,38 +118,23 @@ class SubmissionStatusView(LoginRequiredMixin, View):
         return render(request, self.template_name, context)
 
 # --- Представление для Скачивания Файла (НОВОЕ) ---
-class DownloadSubmissionFileView(LoginRequiredMixin, View):
-    """
-    Позволяет пользователю скачать PDF-файл, который он загрузил.
-    """
+class DownloadSubmissionFileView(APIView):
+    authentication_classes = [authentication.TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
     def get(self, request, submission_id, *args, **kwargs):
-        # Находим загрузку, принадлежащую текущему пользователю
         submission = get_object_or_404(MedicalTestSubmission, id=submission_id, user=request.user)
 
-        # Проверяем, есть ли файл
         if not submission.uploaded_file:
-            view_logger.warning(f"User {request.user.id} tried to download file for submission {submission.id}, but file is missing.")
             raise Http404("File not found for this submission.")
 
         try:
-            # Получаем путь к файлу
             file_path = submission.uploaded_file.path
-            view_logger.info(f"User {request.user.id} downloading file: {file_path}")
-
-            # Используем FileResponse для эффективной отдачи файла
             response = FileResponse(open(file_path, 'rb'), as_attachment=True, filename=os.path.basename(file_path))
-            # as_attachment=True говорит браузеру скачать файл
-            # filename=... устанавливает имя файла для скачивания
             return response
-
         except FileNotFoundError:
-            view_logger.error(f"File not found on disk for submission {submission.id} at path: {submission.uploaded_file.path}")
             raise Http404("File not found on server.")
         except Exception as e:
-            view_logger.error(f"Error serving file for submission {submission.id}: {e}", exc_info=True)
-            # Можно вернуть страницу с ошибкой или сообщение
-            messages.error(request, _("An error occurred while trying to download the file."))
-            # Перенаправляем обратно на страницу статуса
-            status_url = reverse('submission_status_url', kwargs={'submission_id': submission.id})
-            return HttpResponseRedirect(status_url)
+            # Логирование ошибки
+            return Response({"error": "An error occurred while trying to download the file."}, status=500)
 
