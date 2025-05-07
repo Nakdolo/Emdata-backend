@@ -192,3 +192,25 @@ class MedicalTestSubmissionDetailSerializer(serializers.ModelSerializer):
             import os
             return os.path.basename(obj.uploaded_file.name)
         return None
+
+
+
+# --- Сериализаторы для Статистики Здоровья (из django_api_serializers_health_stats_v2) ---
+class MetricHistoryPointSerializer(serializers.Serializer):
+    """
+    Сериализует одну историческую точку данных для метрики.
+    { "date": "YYYY-MM-DD", "value": 123.45 }
+    """
+    date = serializers.DateField()
+    value = serializers.FloatField()
+
+
+class MetricDataSerializer(serializers.Serializer):
+    """
+    Сериализует данные для одной метрики, включая ее историю и процент изменения.
+    Соответствует интерфейсу MetricData фронтенда.
+    """
+    name_of_component = serializers.CharField()
+    name_of_unit = serializers.CharField()
+    percentage_of_change = serializers.FloatField()
+    list_of_all_the_values = MetricHistoryPointSerializer(many=True)

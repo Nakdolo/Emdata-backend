@@ -3,6 +3,7 @@
 # Описание: Представления (Views/Viewsets) DRF для API.
 # Включает представления для загрузки файлов и списка загрузок.
 # ==============================================================================
+from collections import defaultdict
 import logging
 import threading # Для запуска задачи парсинга в отдельном потоке (для простой демонстрации)
 import os # Для работы с путями файлов
@@ -42,6 +43,7 @@ from data.tasks import process_pdf_submission_plain # Убедитесь, что
 from .serializers import (
     AnalyteHistoryResultSerializer,
     MedicalTestSubmissionDetailSerializer,
+    MetricDataSerializer,
     SimpleAnalyteSerializer,
     MedicalTestSubmissionListSerializer,
     UserSerializer,
@@ -326,3 +328,69 @@ class SubmissionDetailAPIView(generics.RetrieveAPIView):
         return self.queryset.filter(user=self.request.user)
 
     # Нет необходимости переопределять retrieve, т.к. generics.RetrieveAPIView делает это автоматически
+
+class UserHealthStatisticsAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+        health_stats_data = []
+
+        # Получаем все результаты тестов для пользователя, где есть числовое значение и дата теста
+        user_test_results = TestResult.objects.filter(
+            submission__user=user,
+            submission__test_date__isnull=False, # Убеждаемся, что дата теста существует
+            value_numeric__isnull=False # Используем только результаты с числовым значением
+        ).select_related('submission', 'analyte').order_by('analyte__name', 'submission__test_date')
+
+        if not user_test_results.exists():
+            logger.info(f"No test results with numeric values found for user {user.id} for health statistics.")
+            return Response([], status=status.HTTP_200_OK) # Возвращаем пустой список, если нет данных
+
+        # Группируем результаты по имени анализа (analyte.name)
+        grouped_results = defaultdict(list)
+        for result in user_test_results:
+            grouped_results[result.analyte.name].append({
+                "date": result.submission.test_date, # Дата из связанной загрузки
+                "value": float(result.value_numeric), # Конвертируем Decimal в float для JSON
+                "unit": result.unit or result.analyte.unit # Используем единицу из результата, или стандартную для анализа
+            })
+
+        # Обрабатываем каждую группу для создания структуры MetricData
+        for analyte_name, history_with_units in grouped_results.items():
+            if not history_with_units: # Пропускаем, если группа пуста (маловероятно после фильтрации)
+                continue
+            
+            # Готовим list_of_all_the_values (точки истории: дата и значение)
+            # Список уже отсортирован по дате благодаря order_by в запросе
+            list_of_all_the_values = [{"date": h["date"], "value": h["value"]} for h in history_with_units]
+            
+            # Определяем процент изменения
+            percentage_of_change = 0.0
+            if len(list_of_all_the_values) >= 2:
+                latest_value = list_of_all_the_values[-1]["value"]
+                previous_value = list_of_all_the_values[-2]["value"]
+                
+                # Убеждаемся, что значения не None и previous_value не ноль
+                if previous_value is not None and latest_value is not None:
+                    if previous_value != 0:
+                        change = latest_value - previous_value
+                        percentage_of_change = round((change / previous_value) * 100, 2)
+                    elif latest_value != 0: # Предыдущее значение было 0, текущее - нет
+                        percentage_of_change = 100.0 # Указываем на значительное изменение от нуля
+                    # Если оба значения 0, percentage_of_change остается 0.0
+            
+            # Получаем единицу измерения из последней записи
+            name_of_unit = history_with_units[-1]["unit"] if history_with_units else "N/A"
+
+            metric_data_entry = {
+                "name_of_component": analyte_name, # Имя анализа
+                "name_of_unit": name_of_unit,
+                "percentage_of_change": percentage_of_change,
+                "list_of_all_the_values": list_of_all_the_values,
+            }
+            health_stats_data.append(metric_data_entry)
+
+        # Сериализуем агрегированные данные
+        serializer = MetricDataSerializer(health_stats_data, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)

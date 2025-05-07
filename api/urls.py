@@ -12,7 +12,8 @@ from data.views import DownloadSubmissionFileView, DeleteSubmissionView
 from .views import (
     CustomVerifyEmailAPIView, 
     AnalyteHistoryAPIView,   
-    AnalyteListAPIView,      
+    AnalyteListAPIView,
+    UserHealthStatisticsAPIView,      
     UserSubmissionsListAPIView,
     UploadLabResultsAPIView, 
     SubmissionDetailAPIView, 
@@ -45,4 +46,7 @@ urlpatterns = [
     # --- URL для СКАЧИВАНИЯ файла через API ---
     # Фронтенд вызывает /api/submission/<submissionId>/download/
     path('submission/<uuid:submission_id>/download/', DownloadSubmissionFileView.as_view(), name='api_submission_download_url'),
+
+        # --- URL для статистики здоровья ---
+    path('health-statistics/', UserHealthStatisticsAPIView.as_view(), name='user-health-statistics-api'),
 ]
