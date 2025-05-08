@@ -278,3 +278,10 @@ class ConfirmDiagnosisSerializer(serializers.Serializer):
         # instance.confirmed_by = # будет установлен в view
         instance.save()
         return instance
+
+
+class SimpleTestTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TestType
+        fields = ['id', 'name', 'description'] # Добавим description для информации
+        read_only_fields = fields

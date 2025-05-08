@@ -15,7 +15,9 @@ from .views import (
     AnalyteHistoryAPIView,   
     AnalyteListAPIView,
     GenerateHealthSummaryAPIView,
+    HealthSummaryCSVExportAPIView,
     TestResultCSVExportAPIView,
+    TestTypeListAPIView,
     UserHealthStatisticsAPIView,      
     UserSubmissionsListAPIView,
     UploadLabResultsAPIView, 
@@ -32,14 +34,12 @@ urlpatterns = [
     path('analytes/<str:analyte_identifier>/history/', AnalyteHistoryAPIView.as_view(), name='analyte-history-api'),
 
     # --- Загрузки (Submissions) ---
-    # Для загрузки файлов (POST)
     path('upload/', UploadLabResultsAPIView.as_view(), name='upload_lab_results_api'),
     
     # Для списка загрузок пользователя (GET)
     path('submissions/', UserSubmissionsListAPIView.as_view(), name='submission-list-api'),
     
     # Для получения деталей конкретной загрузки (GET)
-    # Убедитесь, что SubmissionDetailAPIView в api/views.py обрабатывает GET
     path('submissions/<uuid:id>/', SubmissionDetailAPIView.as_view(), name='submission-detail-api'),
 
     # --- URL для УДАЛЕНИЯ конкретной загрузки (DELETE) ---
@@ -56,5 +56,9 @@ urlpatterns = [
     path('generate-health-summary/', GenerateHealthSummaryAPIView.as_view(), name='generate-health-summary-api'), # <-- НОВЫЙ МАРШРУТ
     path('health-summaries/', UserHealthSummariesListAPIView.as_view(), name='user-health-summaries-list-api'), # <-- NEW URL PATTERN FOR LISTING ALL SUMMARIES
     path('health-summaries/<uuid:summary_id>/confirm/', ConfirmHealthSummaryDiagnosisAPIView.as_view(), name='confirm-health-summary-diagnosis'),
+
+
+    # --- URL для экспорта в CSV ---
+    path('test-types/', TestTypeListAPIView.as_view(), name='api-test-type-list'), # НОВЫЙ МАРШРУТ
     path('export/test-results/csv/', TestResultCSVExportAPIView.as_view(), name='export-test-results-csv'),
-]
+    path('export/health-summaries/csv/', HealthSummaryCSVExportAPIView.as_view(), name='export-health-summaries-csv'),]

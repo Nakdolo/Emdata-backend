@@ -34,7 +34,7 @@ from rest_framework import serializers
 # Импортируем модели из приложения data
 from data.models import HealthSummary, TestResult, Analyte, MedicalTestSubmission, TestType
 # Импортируем модель пользователя (предполагается, что это settings.AUTH_USER_MODEL)
-from api.filters import TestResultExportFilter
+from api.filters import HealthSummaryExportFilter, TestResultExportFilter
 from users.models import User # Убедитесь, что это правильный импорт для вашего проекта
 # Импортируем EmailConfirmationHMAC для верификации email (часть allauth)
 from allauth.account.models import EmailConfirmationHMAC
@@ -54,6 +54,7 @@ from .serializers import (
     MetricDataSerializer,
     SimpleAnalyteSerializer,
     MedicalTestSubmissionListSerializer,
+    SimpleTestTypeSerializer,
     UserSerializer,
     VerifyEmailSerializer,
     # Если у вас есть отдельный сериализатор для загрузки, импортируйте его здесь
@@ -557,37 +558,33 @@ class ConfirmHealthSummaryDiagnosisAPIView(APIView):
             logger.warning(f"Invalid data for confirming summary {summary_id} by user {request.user.id}: {confirm_serializer.errors}")
             return Response(confirm_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class TestResultCSVExportAPIView(generics.ListAPIView): # Using ListAPIView for easy filter integration
-    """
-    API для экспорта отфильтрованных данных TestResult в CSV.
-    Доступно только администраторам.
-    Фильтры применяются через query parameters.
-    """
+
+# --- НОВОЕ ПРЕДСТАВЛЕНИЕ для экспорта данных ---
+class TestResultCSVExportAPIView(generics.ListAPIView):
     queryset = TestResult.objects.select_related(
         'submission__user', 
         'analyte', 
         'submission__test_type'
-    ).order_by('submission__user__id', 'submission__test_date', 'analyte__name')
+    ).order_by('submission__test_date', 'analyte__name') # Сортировка без user email/id
     
-    serializer_class = AnalyteHistoryResultSerializer # Placeholder, not directly used for CSV fields but good for DRF browsable API
-    permission_classes = [permissions.IsAdminUser] # Only admins can export all data
+    permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_class = TestResultExportFilter # Use the new filterset
+    filterset_class = TestResultExportFilter
 
     def get(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         
-        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
         response['Content-Disposition'] = f'attachment; filename="test_results_export_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
         
         writer = csv.writer(response)
         
-        # Define CSV header row
+        # Обновленный header: удалена колонка user_email
         header = [
-            'user_id', 'user_email', 
-            'submission_id', 'submission_date', 'test_date', 'test_type_name',
-            'analyte_id', 'analyte_name_primary', 'analyte_name_en', 'analyte_name_ru', 'analyte_name_kk', 'analyte_unit_default',
-            'result_id', 'reported_value', 'numeric_value', 'reported_unit', 
+            # 'user_email', # УДАЛЕНО
+            'submission_date', 'test_date', 'test_type_name',
+            'analyte_name_primary', 'analyte_name_en', 'analyte_name_ru', 'analyte_name_kk', 'analyte_unit_default',
+            'reported_value', 'numeric_value', 'reported_unit', 
             'reference_range', 'status_text', 'is_abnormal', 'extracted_at'
         ]
         writer.writerow(header)
@@ -595,31 +592,84 @@ class TestResultCSVExportAPIView(generics.ListAPIView): # Using ListAPIView for 
         for result in queryset:
             submission = result.submission
             analyte = result.analyte
-            user = submission.user
-            test_type = submission.test_type
+            # user = submission.user if submission else None # User больше не используется напрямую для вывода email
+            test_type = submission.test_type if submission else None
 
             writer.writerow([
-                user.id if user else '',
-                user.email if user else '',
-                submission.id,
-                submission.submission_date.strftime('%Y-%m-%d %H:%M:%S') if submission.submission_date else '',
-                submission.test_date.strftime('%Y-%m-%d') if submission.test_date else '',
+                # user.email if user else '', # УДАЛЕНО
+                submission.submission_date.strftime('%Y-%m-%d %H:%M:%S') if submission and submission.submission_date else '',
+                submission.test_date.strftime('%Y-%m-%d') if submission and submission.test_date else '',
                 test_type.name if test_type else '',
-                analyte.id,
-                analyte.name,
-                analyte.name_en,
-                analyte.name_ru,
-                analyte.name_kk,
-                analyte.unit,
-                result.id,
+                analyte.name if analyte else '',
+                analyte.name_en if analyte else '',
+                analyte.name_ru if analyte else '',
+                analyte.name_kk if analyte else '',
+                analyte.unit if analyte else '',
                 result.value,
-                result.value_numeric,
+                result.value_numeric if result.value_numeric is not None else '',
                 result.unit,
-                result.reference_range,
-                result.status_text,
-                result.is_abnormal,
+                result.reference_range if result.reference_range is not None else '',
+                result.status_text if result.status_text is not None else '',
+                result.is_abnormal if result.is_abnormal is not None else '',
                 result.extracted_at.strftime('%Y-%m-%d %H:%M:%S') if result.extracted_at else ''
             ])
             
         return response
 
+class HealthSummaryCSVExportAPIView(generics.ListAPIView):
+    queryset = HealthSummary.objects.select_related(
+        'user', 
+        'confirmed_by'
+    ).order_by('-created_at') # Сортировка без user email/id
+    
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = HealthSummaryExportFilter
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        response = HttpResponse(content_type='text/csv; charset=utf-8-sig')
+        response['Content-Disposition'] = f'attachment; filename="health_summaries_export_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        
+        writer = csv.writer(response)
+        
+        # Обновленный header: удалены колонки user_email и confirmed_by_user_email
+        header = [
+            # 'user_email', # УДАЛЕНО
+            'created_at',
+            'symptoms_prompt', 'analyte_data_snapshot_json', 'ai_raw_response',
+            'ai_summary', 'ai_key_findings_json', 'ai_detailed_breakdown_json', 'ai_suggested_diagnosis',
+            'is_confirmed', 'confirmed_diagnosis',
+            # 'confirmed_by_user_email', # УДАЛЕНО
+            'confirmed_at_confirmation'
+        ]
+        writer.writerow(header)
+        
+        for summary in queryset:
+            # user_obj = summary.user # User больше не используется напрямую для вывода email
+            confirmed_by_user_obj = summary.confirmed_by # Оставляем для логики, если понадобится, но email не выводим
+            
+            writer.writerow([
+                # user_obj.email if user_obj else '', # УДАЛЕНО
+                summary.created_at.strftime('%Y-%m-%d %H:%M:%S') if summary.created_at else '',
+                summary.symptoms_prompt,
+                json.dumps(summary.analyte_data_snapshot, ensure_ascii=False, sort_keys=True, default=str) if summary.analyte_data_snapshot is not None else '',
+                summary.ai_raw_response,
+                summary.ai_summary,
+                json.dumps(summary.ai_key_findings, ensure_ascii=False, sort_keys=True, default=str) if summary.ai_key_findings is not None else '',
+                json.dumps(summary.ai_detailed_breakdown, ensure_ascii=False, sort_keys=True, default=str) if summary.ai_detailed_breakdown is not None else '',
+                summary.ai_suggested_diagnosis,
+                summary.is_confirmed,
+                summary.confirmed_diagnosis if summary.confirmed_diagnosis is not None else '',
+                # confirmed_by_user_obj.email if confirmed_by_user_obj else '', # УДАЛЕНО
+                summary.confirmed_at.strftime('%Y-%m-%d %H:%M:%S') if summary.confirmed_at else ''
+            ])
+            
+        return response
+
+# НОВОЕ ПРЕДСТАВЛЕНИЕ для списка типов тестов
+class TestTypeListAPIView(generics.ListAPIView):
+    queryset = TestType.objects.all().order_by('name')
+    serializer_class = SimpleTestTypeSerializer
+    permission_classes = [permissions.IsAuthenticated] # Или другие права по вашему выбору
