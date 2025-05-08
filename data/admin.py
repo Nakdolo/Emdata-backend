@@ -1,5 +1,4 @@
 from django.contrib import admin
-# Импортируем только существующие модели
 from .models import HealthSummary, TestType, MedicalTestSubmission, Analyte, TestResult
 
 @admin.register(TestType)
@@ -18,27 +17,26 @@ class AnalyteAdmin(admin.ModelAdmin):
     )
 
 class TestResultInline(admin.TabularInline):
-    """ Инлайн для отображения результатов на странице загрузки """
     model = TestResult
     fields = ('analyte', 'value', 'value_numeric', 'unit', 'reference_range', 'is_abnormal')
-    readonly_fields = ('analyte', 'value', 'value_numeric', 'unit', 'reference_range', 'is_abnormal', 'extracted_at') # Делаем поля только для чтения
-    extra = 0 # Не показывать пустые формы для добавления
-    can_delete = False # Запрещаем удаление результатов через админку загрузки
+    readonly_fields = ('analyte', 'value', 'value_numeric', 'unit', 'reference_range', 'is_abnormal', 'extracted_at')
+    extra = 0
+    can_delete = False
 
     def has_add_permission(self, request, obj=None):
-        return False # Запрещаем добавление результатов через админку загрузки
+        return False
 
 @admin.register(MedicalTestSubmission)
 class MedicalTestSubmissionAdmin(admin.ModelAdmin):
     list_display = ('id', 'user_email', 'test_type', 'submission_date', 'test_date', 'processing_status', 'result_count')
     list_filter = ('processing_status', 'test_type', 'submission_date')
     search_fields = ('user__email', 'id', 'uploaded_file')
-    readonly_fields = ('user', 'submission_date', 'created_at', 'updated_at', 'extracted_text', 'processing_details') # Делаем основные поля неизменяемыми
-    list_select_related = ('user', 'test_type') # Оптимизация запроса
-    inlines = [TestResultInline] # Добавляем инлайн с результатами
+    readonly_fields = ('id', 'user', 'submission_date', 'created_at', 'updated_at', 'extracted_text', 'processing_details')
+    list_select_related = ('user', 'test_type')
+    inlines = [TestResultInline]
 
     fieldsets = (
-        (None, {'fields': ('id', 'user', 'submission_date')}),
+        (None, {'fields': ('user', 'submission_date')}),
         ('Test Info', {'fields': ('test_type', 'test_date', 'notes', 'uploaded_file')}),
         ('Processing', {'fields': ('processing_status', 'processing_details', 'extracted_text')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at')}),
@@ -53,23 +51,23 @@ class MedicalTestSubmissionAdmin(admin.ModelAdmin):
         return obj.results.count()
     result_count.short_description = 'Results'
 
-    # Запрещаем редактирование через админку после создания (кроме статуса, если нужно)
-    # def get_readonly_fields(self, request, obj=None):
-    #     if obj: # editing an existing object
-    #         return self.readonly_fields + ('test_type', 'test_date', 'notes', 'uploaded_file')
-    #     return self.readonly_fields
-
 @admin.register(HealthSummary)
 class HealthSummaryAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user_email', 'created_at', 'is_confirmed', 'ai_suggested_diagnosis')
+    list_display = ('id', 'user', 'created_at', 'is_confirmed', 'ai_suggested_diagnosis')
     list_filter = ('is_confirmed', 'created_at')
-    search_fields = ('user__email', 'ai_summary', 'ai_suggested_diagnosis')
+    search_fields = ('user__email', 'ai_suggested_diagnosis', 'confirmed_diagnosis')
     readonly_fields = (
         'user', 'created_at', 'symptoms_prompt', 'analyte_data_snapshot',
-        'ai_raw_response', 'ai_summary', 'ai_key_findings', 'ai_detailed_breakdown', 'ai_suggested_diagnosis'
+        'ai_raw_response', 'ai_summary', 'ai_key_findings', 'ai_detailed_breakdown',
+        'ai_suggested_diagnosis', 'is_confirmed', 'confirmed_diagnosis',
+        'confirmed_by', 'confirmed_at'
     )
-
-    def user_email(self, obj):
-        return obj.user.email
-    user_email.short_description = 'User Email'
-    user_email.admin_order_field = 'user__email'
+    fieldsets = (
+        (None, {'fields': ('user', 'created_at')}),
+        ('Input', {'fields': ('symptoms_prompt', 'analyte_data_snapshot')}),
+        ('AI Output', {'fields': (
+            'ai_summary', 'ai_suggested_diagnosis',
+            'ai_key_findings', 'ai_detailed_breakdown', 'ai_raw_response'
+        )}),
+        ('Confirmation', {'fields': ('is_confirmed', 'confirmed_diagnosis', 'confirmed_by', 'confirmed_at')}),
+    )

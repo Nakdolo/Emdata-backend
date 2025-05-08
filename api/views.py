@@ -24,6 +24,8 @@ from django.utils.translation import gettext_lazy as _
 from django.utils import timezone # Для работы с временными зонами
 from django.conf import settings # Для доступа к настройкам проекта (например, MAX_UPLOAD_SIZE)
 from django.db import transaction # Для атомарных операций с базой данных
+from django.http import HttpResponse
+import csv
 
 # --- Добавлен недостающий импорт ---
 from rest_framework import serializers
@@ -32,6 +34,7 @@ from rest_framework import serializers
 # Импортируем модели из приложения data
 from data.models import HealthSummary, TestResult, Analyte, MedicalTestSubmission, TestType
 # Импортируем модель пользователя (предполагается, что это settings.AUTH_USER_MODEL)
+from api.filters import TestResultExportFilter
 from users.models import User # Убедитесь, что это правильный импорт для вашего проекта
 # Импортируем EmailConfirmationHMAC для верификации email (часть allauth)
 from allauth.account.models import EmailConfirmationHMAC
@@ -44,6 +47,7 @@ from data.tasks import process_pdf_submission_plain # Убедитесь, что
 # Импортируем сериализаторы из текущего приложения api
 from .serializers import (
     AnalyteHistoryResultSerializer,
+    ConfirmDiagnosisSerializer,
     GenerateSummaryInputSerializer,
     HealthSummarySerializer,
     MedicalTestSubmissionDetailSerializer,
@@ -513,3 +517,109 @@ class UserHealthSummariesListAPIView(generics.ListAPIView):
         user = self.request.user
         logger.info(f"Fetching all health summaries for user {user.id}")
         return HealthSummary.objects.filter(user=user).order_by('-created_at')
+    
+
+# --- НОВОЕ ПРЕДСТАВЛЕНИЕ для подтверждения диагноза ---
+class ConfirmHealthSummaryDiagnosisAPIView(APIView):
+    """
+    API для подтверждения диагноза в HealthSummary.
+    Принимает PATCH запрос с ID сводки в URL и текстом диагноза в теле.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def patch(self, request, summary_id, *args, **kwargs):
+        summary = get_object_or_404(HealthSummary, id=summary_id, user=request.user)
+
+        if summary.is_confirmed:
+            logger.warning(f"User {request.user.id} attempted to re-confirm summary {summary_id} which is already confirmed.")
+            return Response(
+                {'detail': _('This health summary has already been confirmed.')},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        confirm_serializer = ConfirmDiagnosisSerializer(data=request.data)
+        if confirm_serializer.is_valid():
+            confirmed_diagnosis_text = confirm_serializer.validated_data['confirmed_diagnosis']
+
+            summary.is_confirmed = True
+            summary.confirmed_diagnosis = confirmed_diagnosis_text
+            summary.confirmed_by = request.user
+            summary.confirmed_at = timezone.now()
+            
+            # ИСПРАВЛЕНИЕ: Удаляем 'updated_at' из update_fields.
+            # Django автоматически обновит 'updated_at' благодаря auto_now=True в модели.
+            summary.save(update_fields=['is_confirmed', 'confirmed_diagnosis', 'confirmed_by', 'confirmed_at'])
+            logger.info(f"HealthSummary {summary.id} confirmed by user {request.user.id} with diagnosis: '{confirmed_diagnosis_text}'")
+
+            response_serializer = HealthSummarySerializer(summary)
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+        else:
+            logger.warning(f"Invalid data for confirming summary {summary_id} by user {request.user.id}: {confirm_serializer.errors}")
+            return Response(confirm_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class TestResultCSVExportAPIView(generics.ListAPIView): # Using ListAPIView for easy filter integration
+    """
+    API для экспорта отфильтрованных данных TestResult в CSV.
+    Доступно только администраторам.
+    Фильтры применяются через query parameters.
+    """
+    queryset = TestResult.objects.select_related(
+        'submission__user', 
+        'analyte', 
+        'submission__test_type'
+    ).order_by('submission__user__id', 'submission__test_date', 'analyte__name')
+    
+    serializer_class = AnalyteHistoryResultSerializer # Placeholder, not directly used for CSV fields but good for DRF browsable API
+    permission_classes = [permissions.IsAdminUser] # Only admins can export all data
+    filter_backends = [DjangoFilterBackend]
+    filterset_class = TestResultExportFilter # Use the new filterset
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = f'attachment; filename="test_results_export_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+        
+        writer = csv.writer(response)
+        
+        # Define CSV header row
+        header = [
+            'user_id', 'user_email', 
+            'submission_id', 'submission_date', 'test_date', 'test_type_name',
+            'analyte_id', 'analyte_name_primary', 'analyte_name_en', 'analyte_name_ru', 'analyte_name_kk', 'analyte_unit_default',
+            'result_id', 'reported_value', 'numeric_value', 'reported_unit', 
+            'reference_range', 'status_text', 'is_abnormal', 'extracted_at'
+        ]
+        writer.writerow(header)
+        
+        for result in queryset:
+            submission = result.submission
+            analyte = result.analyte
+            user = submission.user
+            test_type = submission.test_type
+
+            writer.writerow([
+                user.id if user else '',
+                user.email if user else '',
+                submission.id,
+                submission.submission_date.strftime('%Y-%m-%d %H:%M:%S') if submission.submission_date else '',
+                submission.test_date.strftime('%Y-%m-%d') if submission.test_date else '',
+                test_type.name if test_type else '',
+                analyte.id,
+                analyte.name,
+                analyte.name_en,
+                analyte.name_ru,
+                analyte.name_kk,
+                analyte.unit,
+                result.id,
+                result.value,
+                result.value_numeric,
+                result.unit,
+                result.reference_range,
+                result.status_text,
+                result.is_abnormal,
+                result.extracted_at.strftime('%Y-%m-%d %H:%M:%S') if result.extracted_at else ''
+            ])
+            
+        return response
+

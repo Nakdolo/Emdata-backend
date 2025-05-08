@@ -2,6 +2,7 @@
 # Файл: api/serializers.py
 # Описание: Сериализаторы DRF для API.
 # ==============================================================================
+from datetime import timezone
 import logging
 from rest_framework import serializers
 from dj_rest_auth.registration.serializers import RegisterSerializer
@@ -249,3 +250,31 @@ class GenerateSummaryInputSerializer(serializers.Serializer):
     Валидирует входные данные для запроса генерации резюме.
     """
     symptoms = serializers.CharField(required=True, allow_blank=False, max_length=500) # Обязательное поле с симптомами
+
+
+
+class ConfirmDiagnosisSerializer(serializers.Serializer):
+    """
+    Сериализатор для валидации данных при подтверждении диагноза.
+    Ожидает текст подтвержденного диагноза.
+    """
+    confirmed_diagnosis = serializers.CharField(
+        max_length=255,
+        required=True,
+        allow_blank=False, # Диагноз не может быть пустым
+        error_messages={
+            'blank': _('Confirmed diagnosis cannot be empty.'),
+            'required': _('Confirmed diagnosis is required.')
+        }
+    )
+    # summary_id будет частью URL, а не тела запроса
+
+    def update(self, instance, validated_data):
+        # Этот метод не будет напрямую использоваться View, но для полноты
+        instance.is_confirmed = True
+        instance.confirmed_diagnosis = validated_data.get('confirmed_diagnosis', instance.confirmed_diagnosis)
+        # confirmed_by и confirmed_at будут установлены в представлении
+        instance.confirmed_at = timezone.now()
+        # instance.confirmed_by = # будет установлен в view
+        instance.save()
+        return instance
