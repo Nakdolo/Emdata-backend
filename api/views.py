@@ -4,11 +4,13 @@
 # Включает представления для загрузки файлов и списка загрузок.
 # ==============================================================================
 from collections import defaultdict
+import json
 import logging
 import threading # Для запуска задачи парсинга в отдельном потоке (для простой демонстрации)
 import os # Для работы с путями файлов
 import datetime
 from urllib.parse import unquote # Для обработки даты
+from openai import OpenAI  # Новый импорт
 from rest_framework import generics, permissions, viewsets, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,7 +30,7 @@ from rest_framework import serializers
 # ------------------------------------
 
 # Импортируем модели из приложения data
-from data.models import TestResult, Analyte, MedicalTestSubmission, TestType
+from data.models import HealthSummary, TestResult, Analyte, MedicalTestSubmission, TestType
 # Импортируем модель пользователя (предполагается, что это settings.AUTH_USER_MODEL)
 from users.models import User # Убедитесь, что это правильный импорт для вашего проекта
 # Импортируем EmailConfirmationHMAC для верификации email (часть allauth)
@@ -42,6 +44,8 @@ from data.tasks import process_pdf_submission_plain # Убедитесь, что
 # Импортируем сериализаторы из текущего приложения api
 from .serializers import (
     AnalyteHistoryResultSerializer,
+    GenerateSummaryInputSerializer,
+    HealthSummarySerializer,
     MedicalTestSubmissionDetailSerializer,
     MetricDataSerializer,
     SimpleAnalyteSerializer,
@@ -394,3 +398,118 @@ class UserHealthStatisticsAPIView(APIView):
         # Сериализуем агрегированные данные
         serializer = MetricDataSerializer(health_stats_data, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+
+
+class GenerateHealthSummaryAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        user = request.user
+        input_serializer = GenerateSummaryInputSerializer(data=request.data)
+        if not input_serializer.is_valid():
+            logger.warning(f"Invalid input for health summary generation for user {user.id}: {input_serializer.errors}")
+            return Response(input_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        symptoms = input_serializer.validated_data['symptoms']
+        logger.info(f"Generating health summary for user {user.id} with symptoms: {symptoms[:100]}...")
+
+        user_test_results = TestResult.objects.filter(
+            submission__user=user,
+            submission__test_date__isnull=False,
+            value_numeric__isnull=False
+        ).select_related('submission', 'analyte').order_by('analyte__name', '-submission__test_date')
+
+        analyte_data_for_prompt = {}
+        analyte_data_snapshot = []
+
+        for result in user_test_results:
+            analyte_name = result.analyte.name
+            data_point = {
+                "date": result.submission.test_date.isoformat(),
+                "value": float(result.value_numeric),
+                "unit": result.unit or result.analyte.unit,
+                "ref_range": result.reference_range or "N/A"
+            }
+            if analyte_name not in analyte_data_for_prompt:
+                analyte_data_for_prompt[analyte_name] = data_point
+            analyte_data_snapshot.append({"analyte": analyte_name, **data_point})
+
+        analyte_data_snapshot.sort(key=lambda x: (x['analyte'], x['date']))
+
+        prompt = self._build_prompt(symptoms, analyte_data_for_prompt)
+
+        try:
+            ai_response_raw = self._call_openai_api(prompt)
+            parsed_ai_response = json.loads(ai_response_raw)
+        except Exception as e:
+            logger.exception(f"AI API call failed: {e}")
+            return Response({"detail": _("Failed to generate summary using AI.")}, status=status.HTTP_502_BAD_GATEWAY)
+
+        try:
+            summary_instance = HealthSummary.objects.create(
+                user=user,
+                symptoms_prompt=symptoms,
+                analyte_data_snapshot=analyte_data_snapshot,
+                ai_raw_response=ai_response_raw,
+                ai_summary=parsed_ai_response.get('overallSummary', ''),
+                ai_key_findings=parsed_ai_response.get('keyFindings', []),
+                ai_detailed_breakdown=parsed_ai_response.get('detailedBreakdown', []),
+                ai_suggested_diagnosis=parsed_ai_response.get('suggestedDiagnosis', '')
+            )
+            logger.info(f"Saved HealthSummary {summary_instance.id} for user {user.id}")
+        except Exception as e:
+            logger.exception(f"Error saving HealthSummary for user {user.id}: {e}")
+            return Response({"detail": _("Failed to save the generated summary.")}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        response_serializer = HealthSummarySerializer(summary_instance)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    def _build_prompt(self, symptoms, analyte_data):
+        prompt = f"""Ты — искусственный интеллект, помогающий врачам. Твоя задача — на основе симптомов и анализов пациента:
+1. Кратко описать общее состояние пациента (поле: overallSummary).
+2. Выделить ключевые наблюдения (поле: keyFindings, массив строк).
+3. Привести разбор по каждому анализу (поле: detailedBreakdown):
+   - metricName: название анализа
+   - changePercentage: примерная оценка изменений (если нет данных — 0)
+   - latestValue: последнее значение
+   - unit: единица измерения
+   - llmComment: краткий медицинский комментарий по этому анализу
+4. Предложить ОДИН возможный предварительный диагноз или состояние (suggestedDiagnosis, строка)
+Симптомы: {symptoms}
+Последние анализы:
+"""
+        for name, data in analyte_data.items():
+            prompt += f"- {name}: {data['value']} {data['unit']} (Дата: {data['date']}, Референс: {data['ref_range']})\n"
+
+        prompt += "\nВерни результат строго в формате JSON с полями: overallSummary, keyFindings, detailedBreakdown, suggestedDiagnosis."
+        return prompt
+
+    def _call_openai_api(self, prompt):
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Ты медицинский ассистент."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.6,
+            max_tokens=1000
+        )
+
+        return response.choices[0].message.content
+
+
+
+class UserHealthSummariesListAPIView(generics.ListAPIView):
+    """
+    Предоставляет список всех резюме здоровья для текущего пользователя.
+    """
+    serializer_class = HealthSummarySerializer # Use the existing serializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        logger.info(f"Fetching all health summaries for user {user.id}")
+        return HealthSummary.objects.filter(user=user).order_by('-created_at')

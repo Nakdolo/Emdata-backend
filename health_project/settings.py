@@ -203,3 +203,5 @@ LOGGING = {
         'allauth': { 'handlers': ['console'], 'level': 'DEBUG', 'propagate': True, }, # Оставляем DEBUG для отладки allauth
     },
 }
+
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', 'your-openai-api-key')

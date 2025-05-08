@@ -1,6 +1,6 @@
 from django.contrib import admin
 # Импортируем только существующие модели
-from .models import TestType, MedicalTestSubmission, Analyte, TestResult
+from .models import HealthSummary, TestType, MedicalTestSubmission, Analyte, TestResult
 
 @admin.register(TestType)
 class TestTypeAdmin(admin.ModelAdmin):
@@ -59,3 +59,17 @@ class MedicalTestSubmissionAdmin(admin.ModelAdmin):
     #         return self.readonly_fields + ('test_type', 'test_date', 'notes', 'uploaded_file')
     #     return self.readonly_fields
 
+@admin.register(HealthSummary)
+class HealthSummaryAdmin(admin.ModelAdmin):
+    list_display = ('id', 'user_email', 'created_at', 'is_confirmed', 'ai_suggested_diagnosis')
+    list_filter = ('is_confirmed', 'created_at')
+    search_fields = ('user__email', 'ai_summary', 'ai_suggested_diagnosis')
+    readonly_fields = (
+        'user', 'created_at', 'symptoms_prompt', 'analyte_data_snapshot',
+        'ai_raw_response', 'ai_summary', 'ai_key_findings', 'ai_detailed_breakdown', 'ai_suggested_diagnosis'
+    )
+
+    def user_email(self, obj):
+        return obj.user.email
+    user_email.short_description = 'User Email'
+    user_email.admin_order_field = 'user__email'

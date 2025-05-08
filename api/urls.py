@@ -13,10 +13,12 @@ from .views import (
     CustomVerifyEmailAPIView, 
     AnalyteHistoryAPIView,   
     AnalyteListAPIView,
+    GenerateHealthSummaryAPIView,
     UserHealthStatisticsAPIView,      
     UserSubmissionsListAPIView,
     UploadLabResultsAPIView, 
-    SubmissionDetailAPIView, 
+    SubmissionDetailAPIView,
+    UserHealthSummariesListAPIView,
 )
 
 urlpatterns = [
@@ -49,4 +51,6 @@ urlpatterns = [
 
         # --- URL для статистики здоровья ---
     path('health-statistics/', UserHealthStatisticsAPIView.as_view(), name='user-health-statistics-api'),
+    path('generate-health-summary/', GenerateHealthSummaryAPIView.as_view(), name='generate-health-summary-api'), # <-- НОВЫЙ МАРШРУТ
+    path('health-summaries/', UserHealthSummariesListAPIView.as_view(), name='user-health-summaries-list-api'), # <-- NEW URL PATTERN FOR LISTING ALL SUMMARIES
 ]

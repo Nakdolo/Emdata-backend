@@ -17,11 +17,12 @@ from django.conf import settings
 from django.utils import translation
 from urllib.parse import unquote
 
+
 # Импортируем нашу кастомную форму
 from .forms import CustomResetPasswordForm
 
 # Импортируем остальные нужные модели и сериализаторы
-from data.models import TestResult, Analyte, MedicalTestSubmission, TestType
+from data.models import HealthSummary, TestResult, Analyte, MedicalTestSubmission, TestType
 from users.models import UserProfile
 
 User = get_user_model()
@@ -214,3 +215,37 @@ class MetricDataSerializer(serializers.Serializer):
     name_of_unit = serializers.CharField()
     percentage_of_change = serializers.FloatField()
     list_of_all_the_values = MetricHistoryPointSerializer(many=True)
+
+
+
+class HealthSummarySerializer(serializers.ModelSerializer):
+    """
+    Сериализует данные HealthSummary для ответа API.
+    Включает поля, необходимые фронтенду.
+    """
+    # Можно добавить поля пользователя, если нужно
+    # user_email = serializers.EmailField(source='user.email', read_only=True) 
+
+    class Meta:
+        model = HealthSummary
+        fields = [
+            'id',
+            'created_at',
+            'symptoms_prompt', # Возвращаем введенные симптомы
+            # 'analyte_data_snapshot', # Обычно не возвращаем на фронтенд
+            # 'ai_raw_response', # Обычно не возвращаем на фронтенд
+            'ai_summary',
+            'ai_key_findings',
+            'ai_detailed_breakdown',
+            'ai_suggested_diagnosis',
+            'is_confirmed', # Чтобы фронтенд знал статус
+            'confirmed_diagnosis', # Показываем подтвержденный диагноз, если есть
+        ]
+        read_only_fields = ['id', 'created_at', 'is_confirmed', 'confirmed_diagnosis'] # Поля, которые нельзя изменить через этот API (пока)
+
+# --- НОВЫЙ СЕРИАЛИЗАТОР для входных данных GenerateSummary ---
+class GenerateSummaryInputSerializer(serializers.Serializer):
+    """
+    Валидирует входные данные для запроса генерации резюме.
+    """
+    symptoms = serializers.CharField(required=True, allow_blank=False, max_length=500) # Обязательное поле с симптомами

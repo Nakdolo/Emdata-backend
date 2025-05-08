@@ -151,3 +151,38 @@ class TestResult(models.Model):
         ordering = ['submission__submission_date', 'analyte__name']
         unique_together = ('submission', 'analyte')
 
+
+
+class HealthSummary(models.Model):
+    """
+    Хранит резюме состояния здоровья, сгенерированное AI, и связанную информацию.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='health_summaries', verbose_name=_("User"))
+    created_at = models.DateTimeField(_("Created At"), default=timezone.now)
+    
+    # Входные данные для AI
+    symptoms_prompt = models.TextField(_("User Symptoms Prompt"), blank=True, help_text=_("Symptoms provided by the user."))
+    analyte_data_snapshot = models.JSONField(_("Analyte Data Snapshot"), null=True, blank=True, help_text=_("JSON snapshot of analyte data used for this summary."))
+
+    # Ответ от AI (или симуляции)
+    ai_raw_response = models.TextField(_("AI Raw Response"), blank=True, null=True, help_text=_("Full response from the AI model, if available."))
+    ai_summary = models.TextField(_("AI Overall Summary"), blank=True)
+    ai_key_findings = models.JSONField(_("AI Key Findings"), default=list, blank=True, help_text=_("List of key findings strings."))
+    ai_detailed_breakdown = models.JSONField(_("AI Detailed Breakdown"), default=list, blank=True, help_text=_("List of objects detailing metric changes and comments."))
+    ai_suggested_diagnosis = models.CharField(_("AI Suggested Diagnosis"), max_length=255, blank=True)
+
+    # Подтверждение диагноза (для будущей реализации)
+    is_confirmed = models.BooleanField(_("Is Confirmed?"), default=False, db_index=True)
+    confirmed_diagnosis = models.CharField(_("Confirmed Diagnosis"), max_length=255, blank=True, null=True)
+    confirmed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='confirmed_summaries', verbose_name=_("Confirmed By"))
+    confirmed_at = models.DateTimeField(_("Confirmed At"), null=True, blank=True)
+
+    def __str__(self):
+        user_identifier = getattr(self.user, self.user.EMAIL_FIELD, self.user.get_username())
+        return f"Health Summary for {user_identifier} on {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
+    class Meta:
+        verbose_name = _("Health Summary")
+        verbose_name_plural = _("Health Summaries")
+        ordering = ['-created_at']
